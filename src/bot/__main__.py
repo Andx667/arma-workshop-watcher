@@ -26,11 +26,11 @@ class WatchBot(discord.Client):
         self.session = aiohttp.ClientSession(
             headers={"User-Agent": "arma-workshop-watch (+https://github.com/Andx667/arma-workshop-watch)"}
         )
-        self.tree.add_command(WatchGroup(self.store, self.session))
-        await self.tree.sync()
         self.poller = Poller(
             self, self.store, self.session, self.config.poll_interval_minutes, self.config.heartbeat_path
         )
+        self.tree.add_command(WatchGroup(self.store, self.session, self.poller))
+        await self.tree.sync()
         self.poller.start()
 
     async def on_ready(self) -> None:

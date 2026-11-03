@@ -5,14 +5,69 @@ import discord
 from discord import app_commands
 
 from . import steam
-from .store import Store
+from .poller import Poller
+from .store import Store, WatchedMod
 
 
 MAX_PRESET_BYTES = 2_000_000
+REQUIRED_PERMISSIONS = {"view_channel": "View Channel", "send_messages": "Send Messages", "embed_links": "Embed Links"}
+
+
+def missing_permissions(channel: discord.abc.GuildChannel, member: discord.Member) -> list[str]:
+    perms = channel.permissions_for(member)
+    return [label for name, label in REQUIRED_PERMISSIONS.items() if not getattr(perms, name)]
+
+
+def channel_health(guild: discord.Guild, channel_id: int | None) -> tuple[bool, str]:
+    """Whether update notifications can be delivered, and a line saying why (not)."""
+    if channel_id is None:
+        return False, "⚠️ Not set, use `/watch channel`"
+    channel = guild.get_channel(channel_id)
+    if channel is None:
+        return False, f"⚠️ <#{channel_id}> no longer exists or I can't see it"
+    missing = missing_permissions(channel, guild.me)
+    if missing:
+        return False, f"⚠️ {channel.mention}: I am missing {', '.join(missing)}"
+    return True, f"✅ {channel.mention}"
+
+
+def build_status_embed(
+    poller: Poller, guild: discord.Guild, channel_id: int | None, mod_count: int, missing: list[WatchedMod]
+) -> discord.Embed:
+    channel_ok, channel_text = channel_health(guild, channel_id)
+    healthy = channel_ok and not poller.failures and not missing
+    embed = discord.Embed(
+        title="Watcher status", colour=discord.Colour.green() if healthy else discord.Colour.orange()
+    )
+    embed.add_field(
+        name="Last successful check",
+        value=f"<t:{int(poller.last_success)}:R>" if poller.last_success else "None since the bot started",
+    )
+    next_poll = poller.next_poll
+    embed.add_field(
+        name="Next check",
+        value=f"<t:{int(next_poll)}:R>, every {poller.interval_minutes} min" if next_poll else "Not scheduled",
+    )
+    if poller.failures:
+        steam_text = (
+            f"⚠️ Failing since <t:{int(poller.failing_since)}:R> ({poller.failures} attempt(s) in a row), "
+            f"retrying with a longer interval\n`{poller.last_error}`"
+        )
+    else:
+        steam_text = "✅ Answering"
+    embed.add_field(name="Steam", value=steam_text[:1024], inline=False)
+    embed.add_field(name="Notification channel", value=channel_text, inline=False)
+    embed.add_field(name="Watched mods", value=str(mod_count))
+    if missing:
+        lines = "\n".join(f"- [{m.title}]({steam.workshop_url(m.mod_id)}) (`{m.mod_id}`)" for m in missing)
+        if len(lines) > 1024:
+            lines = lines[:1020].rsplit("\n", 1)[0] + "\n…"
+        embed.add_field(name=f"Removed or hidden on Steam ({len(missing)})", value=lines, inline=False)
+    return embed
 
 
 class WatchGroup(app_commands.Group):
-    def __init__(self, store: Store, session: aiohttp.ClientSession):
+    def __init__(self, store: Store, session: aiohttp.ClientSession, poller: Poller):
         super().__init__(
             name="watch",
             description="Manage the watched Workshop mods",
@@ -21,6 +76,7 @@ class WatchGroup(app_commands.Group):
         )
         self.store = store
         self.session = session
+        self.poller = poller
 
     @app_commands.command(description="Start watching a Workshop mod (link or ID)")
     @app_commands.describe(mod="Workshop link or numeric ID")
@@ -122,11 +178,18 @@ class WatchGroup(app_commands.Group):
     @app_commands.command(description="Set the channel for update notifications")
     @app_commands.describe(channel="Channel to post in")
     async def channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
-        perms = channel.permissions_for(interaction.guild.me)
-        if not (perms.view_channel and perms.send_messages and perms.embed_links):
+        if missing_permissions(channel, interaction.guild.me):
             await interaction.response.send_message(
                 f"I need View Channel, Send Messages and Embed Links in {channel.mention}.", ephemeral=True
             )
             return
         await self.store.set_channel(interaction.guild_id, channel.id)
         await interaction.response.send_message(f"Updates will be posted in {channel.mention}.", ephemeral=True)
+
+    @app_commands.command(description="Check that updates can be detected and delivered")
+    async def status(self, interaction: discord.Interaction):
+        mods = await self.store.list_mods(interaction.guild_id)
+        missing = await self.store.missing_mods(interaction.guild_id)
+        channel_id = await self.store.get_channel(interaction.guild_id)
+        embed = build_status_embed(self.poller, interaction.guild, channel_id, len(mods), missing)
+        await interaction.response.send_message(embed=embed, ephemeral=True)

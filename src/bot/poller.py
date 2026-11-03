@@ -34,7 +34,14 @@ class Poller:
         self.failures = 0
         self.failing_since: float | None = None
         self.outage_notified = False
+        self.last_success: float | None = None
+        self.last_error: str | None = None
         self._loop = tasks.loop(minutes=interval_minutes)(self._tick)
+
+    @property
+    def next_poll(self) -> float | None:
+        when = self._loop.next_iteration
+        return when.timestamp() if when else None
 
     def start(self) -> None:
         self._loop.start()
@@ -51,15 +58,15 @@ class Poller:
 
     async def run_once(self) -> None:
         ids = await self.store.all_mod_ids()
-        if ids:
-            try:
-                details = await steam.fetch_details(self.session, ids)
-            except steam.SteamError as exc:
-                await self._steam_failed(exc)
-            else:
-                await self._steam_recovered()
-                for mod_id in ids:
-                    await self._handle_mod(details[mod_id])
+        try:
+            details = await steam.fetch_details(self.session, ids) if ids else {}
+        except steam.SteamError as exc:
+            await self._steam_failed(exc)
+        else:
+            await self._steam_recovered()
+            for mod_id in ids:
+                await self._handle_mod(details[mod_id])
+            self.last_success = time.time()
         self.heartbeat.parent.mkdir(parents=True, exist_ok=True)
         # The healthcheck reads the current interval, so a long backoff does not look like a hang.
         self.heartbeat.write_text(str(self.interval_minutes))
@@ -67,6 +74,7 @@ class Poller:
     async def _steam_failed(self, exc: steam.SteamError) -> None:
         now = time.time()
         self.failures += 1
+        self.last_error = str(exc)
         if self.failing_since is None:
             self.failing_since = now
         self._set_interval(backoff_minutes(self.base_interval, self.failures))

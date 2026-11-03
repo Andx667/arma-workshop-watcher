@@ -112,6 +112,13 @@ class Store:
         ) as cur:
             return [WatchedMod(r["mod_id"], r["title"]) async for r in cur]
 
+    async def missing_mods(self, guild_id: int) -> list[WatchedMod]:
+        async with self._db.execute(
+            "SELECT mod_id, title FROM mods WHERE guild_id = ? AND missing = 1 ORDER BY title COLLATE NOCASE",
+            (guild_id,),
+        ) as cur:
+            return [WatchedMod(r["mod_id"], r["title"]) async for r in cur]
+
     async def all_mod_ids(self) -> list[int]:
         async with self._db.execute("SELECT DISTINCT mod_id FROM mods") as cur:
             return [r["mod_id"] async for r in cur]
