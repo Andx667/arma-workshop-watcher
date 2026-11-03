@@ -68,14 +68,16 @@ class Poller:
         changelog = await steam.fetch_changelog(self.session, details.id)
         for sub in due:
             presets = await self.store.sources(sub.guild_id, details.id)
-            embed = build_update_embed(details, changelog, presets)
+            embed = build_update_embed(details, changelog, presets, sub.file_size)
             try:
                 await self._send(sub.channel_id, sub.guild_id, embed=embed)
             except Exception:
                 # Transient failure: leave last_updated alone so the next poll retries.
                 log.exception("Could not notify guild %s about mod %s", sub.guild_id, details.id)
                 continue
-            await self.store.record_update(sub.guild_id, details.id, details.title, details.time_updated)
+            await self.store.record_update(
+                sub.guild_id, details.id, details.title, details.time_updated, details.file_size or None
+            )
 
     async def _send(self, channel_id: int | None, guild_id: int, **kwargs) -> None:
         """Permanent problems (no channel set, channel gone, no permission) are logged and swallowed;

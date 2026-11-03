@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS mods (
     title        TEXT    NOT NULL,
     last_updated INTEGER NOT NULL,
     missing      INTEGER NOT NULL DEFAULT 0,
+    file_size    INTEGER,
     PRIMARY KEY (guild_id, mod_id)
 );
 CREATE TABLE IF NOT EXISTS mod_sources (
@@ -32,6 +33,7 @@ class Subscription:
     title: str
     last_updated: int
     missing: bool
+    file_size: int | None
 
 
 @dataclass(frozen=True)
@@ -50,6 +52,11 @@ class Store:
         db = await aiosqlite.connect(path)
         db.row_factory = aiosqlite.Row
         await db.executescript(SCHEMA)
+        async with db.execute("PRAGMA table_info(mods)") as cur:
+            columns = {r["name"] async for r in cur}
+        # Databases created before file sizes were tracked.
+        if "file_size" not in columns:
+            await db.execute("ALTER TABLE mods ADD COLUMN file_size INTEGER")
         await db.commit()
         return cls(db)
 
@@ -69,10 +76,12 @@ class Store:
             row = await cur.fetchone()
         return row["channel_id"] if row else None
 
-    async def add_mod(self, guild_id: int, mod_id: int, title: str, last_updated: int) -> bool:
+    async def add_mod(
+        self, guild_id: int, mod_id: int, title: str, last_updated: int, file_size: int | None = None
+    ) -> bool:
         cur = await self._db.execute(
-            "INSERT OR IGNORE INTO mods (guild_id, mod_id, title, last_updated) VALUES (?, ?, ?, ?)",
-            (guild_id, mod_id, title, last_updated),
+            "INSERT OR IGNORE INTO mods (guild_id, mod_id, title, last_updated, file_size) VALUES (?, ?, ?, ?, ?)",
+            (guild_id, mod_id, title, last_updated, file_size),
         )
         await self._db.commit()
         return cur.rowcount > 0
@@ -109,19 +118,23 @@ class Store:
 
     async def subscriptions(self, mod_id: int) -> list[Subscription]:
         async with self._db.execute(
-            "SELECT m.guild_id, g.channel_id, m.title, m.last_updated, m.missing "
+            "SELECT m.guild_id, g.channel_id, m.title, m.last_updated, m.missing, m.file_size "
             "FROM mods m LEFT JOIN guilds g ON g.guild_id = m.guild_id WHERE m.mod_id = ?",
             (mod_id,),
         ) as cur:
             return [
-                Subscription(r["guild_id"], r["channel_id"], r["title"], r["last_updated"], bool(r["missing"]))
+                Subscription(
+                    r["guild_id"], r["channel_id"], r["title"], r["last_updated"], bool(r["missing"]), r["file_size"]
+                )
                 async for r in cur
             ]
 
-    async def record_update(self, guild_id: int, mod_id: int, title: str, last_updated: int) -> None:
+    async def record_update(
+        self, guild_id: int, mod_id: int, title: str, last_updated: int, file_size: int | None
+    ) -> None:
         await self._db.execute(
-            "UPDATE mods SET title = ?, last_updated = ?, missing = 0 WHERE guild_id = ? AND mod_id = ?",
-            (title, last_updated, guild_id, mod_id),
+            "UPDATE mods SET title = ?, last_updated = ?, file_size = ?, missing = 0 WHERE guild_id = ? AND mod_id = ?",
+            (title, last_updated, file_size, guild_id, mod_id),
         )
         await self._db.commit()
 
