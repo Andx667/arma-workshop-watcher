@@ -116,6 +116,14 @@ class Store:
         async with self._db.execute("SELECT DISTINCT mod_id FROM mods") as cur:
             return [r["mod_id"] async for r in cur]
 
+    async def notification_channels(self) -> list[tuple[int, int]]:
+        """(guild_id, channel_id) of every server that has a channel set and watches at least one mod."""
+        async with self._db.execute(
+            "SELECT g.guild_id, g.channel_id FROM guilds g WHERE g.channel_id IS NOT NULL "
+            "AND EXISTS (SELECT 1 FROM mods m WHERE m.guild_id = g.guild_id)"
+        ) as cur:
+            return [(r["guild_id"], r["channel_id"]) async for r in cur]
+
     async def subscriptions(self, mod_id: int) -> list[Subscription]:
         async with self._db.execute(
             "SELECT m.guild_id, g.channel_id, m.title, m.last_updated, m.missing, m.file_size "

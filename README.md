@@ -32,6 +32,8 @@ If a mod is removed or hidden on Steam, the bot posts one warning and keeps watc
 
 Every `POLL_INTERVAL_MINUTES` the bot asks the public Steam `GetPublishedFileDetails` endpoint (no API key) about all watched mods in one request and compares `time_updated`. The changelog text is scraped from the Workshop changelog page. That part is best effort: if Steam changes the page, notifications still go out, just without the note.
 
+If Steam doesn't answer, the bot retries with a growing interval (doubling up to 60 minutes) and goes back to normal as soon as Steam responds. After an hour of failures it posts one notice in each notification channel, and another when Steam is back.
+
 State lives in SQLite at `$DATA_DIR/bot.db`.
 
 ## Configuration

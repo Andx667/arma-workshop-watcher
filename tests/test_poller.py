@@ -3,7 +3,7 @@ import asyncio
 import discord
 
 from bot import steam
-from bot.poller import Poller
+from bot.poller import OUTAGE_NOTICE_SECONDS, Poller
 from bot.store import Store
 
 
@@ -222,6 +222,75 @@ def test_update_names_source_presets(tmp_path, monkeypatch):
         assert embed.fields[0].value == "Preset A, Preset B"
         await store.remove_mod(10, 1)
         assert await store.sources(10, 1) == []
+        await store.close()
+
+    asyncio.run(scenario())
+
+
+def test_steam_outage_backs_off_and_notifies_once(tmp_path, monkeypatch):
+    async def scenario():
+        watching, idle = FakeChannel(), FakeChannel()
+        state = {"down": True}
+
+        async def fake_details(session, ids):
+            if state["down"]:
+                raise steam.SteamError("Steam API returned HTTP 503")
+            return {i: details(updated=100) for i in ids}
+
+        monkeypatch.setattr(steam, "fetch_details", fake_details)
+        store = await Store.open(tmp_path / "db.sqlite")
+        await store.set_channel(10, 99)
+        await store.add_mod(10, 1, "Cool Mod", 100)
+        await store.set_channel(20, 98)  # watches nothing, so gets no notices
+        poller = Poller(FakeClient({99: watching, 98: idle}), store, None, 10, tmp_path / "hb")
+
+        intervals = []
+        for _ in range(5):
+            await poller.run_once()
+            intervals.append(poller.interval_minutes)
+        assert intervals == [10, 20, 40, 60, 60]
+        assert (tmp_path / "hb").read_text() == "60"
+        assert watching.sent == []  # not down long enough yet
+
+        poller.failing_since -= OUTAGE_NOTICE_SECONDS
+        await poller.run_once()
+        await poller.run_once()
+        assert len(watching.sent) == 1
+        assert "Steam has not answered" in watching.sent[0]["content"]
+
+        state["down"] = False
+        await poller.run_once()
+        assert len(watching.sent) == 2
+        assert "answering again" in watching.sent[1]["content"]
+        assert poller.interval_minutes == 10
+        assert (tmp_path / "hb").read_text() == "10"
+        assert idle.sent == []
+        await store.close()
+
+    asyncio.run(scenario())
+
+
+def test_short_steam_hiccup_is_silent(tmp_path, monkeypatch):
+    async def scenario():
+        channel = FakeChannel()
+        state = {"down": True}
+
+        async def fake_details(session, ids):
+            if state["down"]:
+                raise steam.SteamError("timeout")
+            return {i: details(updated=100) for i in ids}
+
+        monkeypatch.setattr(steam, "fetch_details", fake_details)
+        store = await Store.open(tmp_path / "db.sqlite")
+        await store.set_channel(10, 99)
+        await store.add_mod(10, 1, "Cool Mod", 100)
+        poller = Poller(FakeClient({99: channel}), store, None, 10, tmp_path / "hb")
+
+        await poller.run_once()
+        state["down"] = False
+        await poller.run_once()
+        assert channel.sent == []
+        assert poller.failures == 0 and poller.interval_minutes == 10
         await store.close()
 
     asyncio.run(scenario())

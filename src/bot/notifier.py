@@ -60,3 +60,14 @@ def missing_message(title: str, mod_id: int) -> str:
         f"⚠️ Workshop item **{title}** ({mod_id}) can no longer be found. It was removed or hidden. "
         "I keep watching it; use `/watch remove` to stop."
     )
+
+
+def steam_down_message(since: int) -> str:
+    return (
+        f"⚠️ Steam has not answered since <t:{since}:R>, so I can't check for mod updates. "
+        "I keep retrying and will post here when it works again."
+    )
+
+
+def steam_back_message() -> str:
+    return "✅ Steam is answering again. Updates that happened in the meantime follow now."
