@@ -25,6 +25,7 @@ All commands need the *Manage Server* permission by default (adjustable in Serve
 | `/watch add <link or id>` | Start watching a mod. The current state is the baseline, so no message is sent for the mod's existing version |
 | `/watch remove <mod>` | Stop watching (autocompletes) |
 | `/watch list` | Show watched mods |
+| `/watch status` | Check that the bot is working: last and next check, whether Steam is answering, whether the notification channel still exists and has the needed permissions, and which mods are removed or hidden on Steam |
 
 If a mod is removed or hidden on Steam, the bot posts one warning and keeps watching.
 
