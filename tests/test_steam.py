@@ -48,3 +48,14 @@ def test_parse_changelog_unknown_layout():
 def test_parse_preset_name():
     assert parse_preset_name('<head><meta name="arma:PresetName" content="[TTT] A" /></head>') == "[TTT] A"
     assert parse_preset_name("<html></html>") is None
+
+
+def test_describe_size():
+    from bot.notifier import describe_size, format_size
+
+    assert format_size(512) == "512 B"
+    assert format_size(1536) == "1.5 KB"
+    assert format_size(3 * 1024**3) == "3.0 GB"
+    assert describe_size(100 * 1024**2, None) == "100.0 MB"
+    assert describe_size(100 * 1024**2, 100 * 1024**2) == "100.0 MB"
+    assert describe_size(90 * 1024**2, 100 * 1024**2) == "90.0 MB (-10.0 MB)"

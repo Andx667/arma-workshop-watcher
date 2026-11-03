@@ -28,6 +28,7 @@ class ModDetails:
     time_updated: int
     preview_url: str | None
     found: bool
+    file_size: int = 0
 
 
 @dataclass(frozen=True)
@@ -93,6 +94,7 @@ async def fetch_details(session: aiohttp.ClientSession, ids: list[int]) -> dict[
                 time_updated=int(item.get("time_updated") or 0),
                 preview_url=item.get("preview_url") or None,
                 found=found,
+                file_size=int(item.get("file_size") or 0),
             )
     for mod_id in ids:
         result.setdefault(mod_id, ModDetails(mod_id, str(mod_id), 0, None, False))

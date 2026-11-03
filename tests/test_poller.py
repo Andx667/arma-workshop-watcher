@@ -65,6 +65,58 @@ def test_notifies_once_per_update(tmp_path, monkeypatch):
     asyncio.run(scenario())
 
 
+def test_update_shows_size_change(tmp_path, monkeypatch):
+    async def scenario():
+        channel = FakeChannel()
+        state = {"details": steam.ModDetails(1, "Cool Mod", 200, None, True, 300 * 1024**2)}
+
+        async def fake_details(session, ids):
+            return {i: state["details"] for i in ids}
+
+        async def fake_changelog(session, mod_id):
+            return None
+
+        monkeypatch.setattr(steam, "fetch_details", fake_details)
+        monkeypatch.setattr(steam, "fetch_changelog", fake_changelog)
+        store = await Store.open(tmp_path / "db.sqlite")
+        await store.set_channel(10, 99)
+        await store.add_mod(10, 1, "Cool Mod", 100)  # size unknown, e.g. watched before sizes were stored
+        poller = Poller(FakeClient({99: channel}), store, None, 10, tmp_path / "hb")
+
+        await poller.run_once()
+        assert channel.sent[0]["embed"].fields[0].value == "300.0 MB"
+
+        state["details"] = steam.ModDetails(1, "Cool Mod", 300, None, True, int(1.5 * 1024**3))
+        await poller.run_once()
+        assert channel.sent[1]["embed"].fields[0].name == "Size"
+        assert channel.sent[1]["embed"].fields[0].value == "1.5 GB (+1.2 GB)"
+        await store.close()
+
+    asyncio.run(scenario())
+
+
+def test_old_database_gets_size_column(tmp_path):
+    async def scenario():
+        import aiosqlite
+
+        path = tmp_path / "db.sqlite"
+        async with aiosqlite.connect(path) as db:
+            await db.execute(
+                "CREATE TABLE mods (guild_id INTEGER NOT NULL, mod_id INTEGER NOT NULL, title TEXT NOT NULL, "
+                "last_updated INTEGER NOT NULL, missing INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (guild_id, mod_id))"
+            )
+            await db.execute("INSERT INTO mods (guild_id, mod_id, title, last_updated) VALUES (10, 1, 'Old', 100)")
+            await db.commit()
+
+        store = await Store.open(path)
+        assert (await store.subscriptions(1))[0].file_size is None
+        await store.record_update(10, 1, "Old", 200, 42)
+        assert (await store.subscriptions(1))[0].file_size == 42
+        await store.close()
+
+    asyncio.run(scenario())
+
+
 def test_transient_failure_retries(tmp_path, monkeypatch):
     async def scenario():
         channel = FakeChannel(fail=RuntimeError("boom"))

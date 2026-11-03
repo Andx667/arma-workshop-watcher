@@ -39,7 +39,9 @@ class WatchGroup(app_commands.Group):
             await interaction.followup.send(f"No Workshop item with ID {mod_id} found.")
             return
         # Baseline is the current state, so adding a mod never triggers a notification.
-        added = await self.store.add_mod(interaction.guild_id, mod_id, details.title, details.time_updated)
+        added = await self.store.add_mod(
+            interaction.guild_id, mod_id, details.title, details.time_updated, details.file_size or None
+        )
         if not added:
             await interaction.followup.send(f"Already watching **{details.title}**.")
             return
@@ -72,7 +74,7 @@ class WatchGroup(app_commands.Group):
             if not d.found:
                 missing.append(mod_id)
             else:
-                if await self.store.add_mod(interaction.guild_id, mod_id, d.title, d.time_updated):
+                if await self.store.add_mod(interaction.guild_id, mod_id, d.title, d.time_updated, d.file_size or None):
                     added += 1
                 else:
                     existing += 1

@@ -12,7 +12,7 @@
 
 A Discord bot that posts a message when a watched Steam Workshop item is updated. Built for Arma 3 mods, but it works for any game's Workshop.
 
-Each notification has the mod title, thumbnail, update time, a link, and the newest changelog entry when Steam's changelog page can be read.
+Each notification has the mod title, thumbnail, update time, a link, the mod's size (and how much it changed since the last update), and the newest changelog entry when Steam's changelog page can be read.
 
 ## Commands
 
