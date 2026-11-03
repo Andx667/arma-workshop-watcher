@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "arma-workshop-watch"
-version = "0.1.0"
+version = "1.1.0"
 description = "Discord bot that announces Steam Workshop mod updates"
 requires-python = ">=3.12"
 license = "MIT"
