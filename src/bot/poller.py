@@ -1,14 +1,26 @@
 import logging
+import time
 from pathlib import Path
 
 import discord
 from discord.ext import tasks
 
 from . import steam
-from .notifier import build_update_embed, missing_message
+from .notifier import build_update_embed, missing_message, steam_back_message, steam_down_message
 from .store import Store
 
 log = logging.getLogger(__name__)
+
+# While Steam keeps failing, the poll interval doubles up to this cap.
+MAX_BACKOFF_MINUTES = 60
+# Servers are told once Steam has been failing this long, and again when it recovers.
+OUTAGE_NOTICE_SECONDS = 3600
+
+
+def backoff_minutes(base: int, failures: int) -> int:
+    if failures == 0:
+        return base
+    return min(base * 2 ** min(failures - 1, 10), max(base, MAX_BACKOFF_MINUTES))
 
 
 class Poller:
@@ -17,6 +29,11 @@ class Poller:
         self.store = store
         self.session = session
         self.heartbeat = heartbeat
+        self.base_interval = interval_minutes
+        self.interval_minutes = interval_minutes
+        self.failures = 0
+        self.failing_since: float | None = None
+        self.outage_notified = False
         self._loop = tasks.loop(minutes=interval_minutes)(self._tick)
 
     def start(self) -> None:
@@ -29,19 +46,62 @@ class Poller:
         await self.client.wait_until_ready()
         try:
             await self.run_once()
-        except steam.SteamError as exc:
-            log.warning("Skipping this poll: %s", exc)
         except Exception:
             log.exception("Poll failed")
 
     async def run_once(self) -> None:
         ids = await self.store.all_mod_ids()
         if ids:
-            details = await steam.fetch_details(self.session, ids)
-            for mod_id in ids:
-                await self._handle_mod(details[mod_id])
+            try:
+                details = await steam.fetch_details(self.session, ids)
+            except steam.SteamError as exc:
+                await self._steam_failed(exc)
+            else:
+                await self._steam_recovered()
+                for mod_id in ids:
+                    await self._handle_mod(details[mod_id])
         self.heartbeat.parent.mkdir(parents=True, exist_ok=True)
-        self.heartbeat.touch()
+        # The healthcheck reads the current interval, so a long backoff does not look like a hang.
+        self.heartbeat.write_text(str(self.interval_minutes))
+
+    async def _steam_failed(self, exc: steam.SteamError) -> None:
+        now = time.time()
+        self.failures += 1
+        if self.failing_since is None:
+            self.failing_since = now
+        self._set_interval(backoff_minutes(self.base_interval, self.failures))
+        log.warning(
+            "Skipping this poll (%d failure(s) in a row, next try in %d min): %s",
+            self.failures,
+            self.interval_minutes,
+            exc,
+        )
+        if not self.outage_notified and now - self.failing_since >= OUTAGE_NOTICE_SECONDS:
+            self.outage_notified = True
+            await self._broadcast(steam_down_message(int(self.failing_since)))
+
+    async def _steam_recovered(self) -> None:
+        if not self.failures:
+            return
+        log.info("Steam answered again after %d failed poll(s)", self.failures)
+        if self.outage_notified:
+            await self._broadcast(steam_back_message())
+        self.failures = 0
+        self.failing_since = None
+        self.outage_notified = False
+        self._set_interval(self.base_interval)
+
+    def _set_interval(self, minutes: int) -> None:
+        if minutes != self.interval_minutes:
+            self.interval_minutes = minutes
+            self._loop.change_interval(minutes=minutes)
+
+    async def _broadcast(self, content: str) -> None:
+        for guild_id, channel_id in await self.store.notification_channels():
+            try:
+                await self._send(channel_id, guild_id, content=content)
+            except Exception:
+                log.exception("Could not post Steam status to guild %s", guild_id)
 
     async def _handle_mod(self, details: steam.ModDetails) -> None:
         subs = await self.store.subscriptions(details.id)
