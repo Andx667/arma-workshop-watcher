@@ -1,4 +1,4 @@
 {
   "schemaVersion": 2,
-  "imageName": "ghcr.io/andx667/arma-workshop-watch:latest"
+  "imageName": "ghcr.io/andx667/arma-workshop-watcher:latest"
 }

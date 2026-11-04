@@ -5,7 +5,7 @@
 # arma-workshop-watch
 
 [![Build](https://github.com/Andx667/arma-workshop-watch/actions/workflows/build.yml/badge.svg)](https://github.com/Andx667/arma-workshop-watch/actions/workflows/build.yml)
-[![Docker image](https://img.shields.io/badge/ghcr.io-andx667%2Farma--workshop--watch-blue?logo=docker&logoColor=white)](https://github.com/Andx667/arma-workshop-watch/pkgs/container/arma-workshop-watch)
+[![Docker image](https://img.shields.io/badge/ghcr.io-andx667%2Farma--workshop--watcher-blue?logo=docker&logoColor=white)](https://github.com/Andx667/arma-workshop-watch/pkgs/container/arma-workshop-watcher)
 ![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue?logo=python&logoColor=white)
 [![discord.py](https://img.shields.io/badge/discord.py-2.x-5865F2?logo=discord&logoColor=white)](https://github.com/Rapptz/discord.py)
 ![Last commit](https://img.shields.io/github/last-commit/Andx667/arma-workshop-watch)
@@ -54,12 +54,12 @@ State lives in SQLite at `$DATA_DIR/bot.db`.
 
 ## Deploy on CapRover
 
-CI publishes `ghcr.io/andx667/arma-workshop-watch:latest` on every push to `main`.
+CI publishes `ghcr.io/andx667/arma-workshop-watcher:latest` on every push to `main`.
 
-1. After the first CI run, open the package on GitHub (Packages → arma-workshop-watch → Package settings) and set the visibility to **public**, or add GHCR credentials under CapRover → Cluster → Docker Registry.
+1. After the first CI run, open the package on GitHub (Packages → arma-workshop-watcher → Package settings) and set the visibility to **public**, or add GHCR credentials under CapRover → Cluster → Docker Registry.
 2. In CapRover create an app. Don't enable HTTP; the bot has no web interface.
 3. App Configs: add the `DISCORD_TOKEN` environment variable. Add a **persistent directory** with path in app `/data`. Keep the instance count at 1.
-4. Deployment tab → *Deploy via ImageName*: `ghcr.io/andx667/arma-workshop-watch:latest`.
+4. Deployment tab → *Deploy via ImageName*: `ghcr.io/andx667/arma-workshop-watcher:latest`.
 5. Optional auto-redeploy: in the app's Deployment tab enable *Method 3: Deploy via webhook*, copy the URL, and store it as the repository secret `CAPROVER_WEBHOOK_URL`. CI then redeploys after each successful image build. For this to pull a new image, deploy once with the image name first.
 
 ## Local development
