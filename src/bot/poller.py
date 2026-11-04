@@ -130,6 +130,8 @@ class Poller:
         if not due:
             if any(s.missing for s in subs):
                 await self.store.set_missing(details.id, False)
+            if details.file_size and any(s.file_size is None for s in subs):
+                await self.store.backfill_size(details.id, details.file_size)
             return
 
         log.info("Mod %s (%s) updated on Steam, notifying %d guild(s)", details.id, details.title, len(due))

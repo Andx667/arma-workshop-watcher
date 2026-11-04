@@ -30,7 +30,10 @@ class WatchBot(discord.Client):
             self, self.store, self.session, self.config.poll_interval_minutes, self.config.heartbeat_path
         )
         self.tree.add_command(WatchGroup(self.store, self.session, self.poller))
-        await self.tree.sync()
+        synced = await self.tree.sync()
+        for cmd in synced:
+            subcommands = [o.name for o in cmd.options if isinstance(o, app_commands.AppCommandGroup)]
+            log.info("Synced global command /%s %s", cmd.name, " ".join(subcommands))
         self.poller.start()
 
     async def on_ready(self) -> None:

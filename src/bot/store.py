@@ -153,6 +153,13 @@ class Store:
         )
         await self._db.commit()
 
+    async def backfill_size(self, mod_id: int, file_size: int) -> None:
+        """Store the size for rows that predate size tracking, so the next update can show the change."""
+        await self._db.execute(
+            "UPDATE mods SET file_size = ? WHERE mod_id = ? AND file_size IS NULL", (file_size, mod_id)
+        )
+        await self._db.commit()
+
     async def set_missing(self, mod_id: int, missing: bool) -> None:
         await self._db.execute("UPDATE mods SET missing = ? WHERE mod_id = ?", (int(missing), mod_id))
         await self._db.commit()

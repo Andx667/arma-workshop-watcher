@@ -95,6 +95,36 @@ def test_update_shows_size_change(tmp_path, monkeypatch):
     asyncio.run(scenario())
 
 
+def test_unknown_size_is_backfilled_without_update(tmp_path, monkeypatch):
+    async def scenario():
+        channel = FakeChannel()
+        state = {"details": steam.ModDetails(1, "Cool Mod", 100, None, True, 300 * 1024**2)}
+
+        async def fake_details(session, ids):
+            return {i: state["details"] for i in ids}
+
+        async def fake_changelog(session, mod_id):
+            return None
+
+        monkeypatch.setattr(steam, "fetch_details", fake_details)
+        monkeypatch.setattr(steam, "fetch_changelog", fake_changelog)
+        store = await Store.open(tmp_path / "db.sqlite")
+        await store.set_channel(10, 99)
+        await store.add_mod(10, 1, "Cool Mod", 100)  # watched before sizes were stored
+        poller = Poller(FakeClient({99: channel}), store, None, 10, tmp_path / "hb")
+
+        await poller.run_once()
+        assert channel.sent == []
+        assert (await store.subscriptions(1))[0].file_size == 300 * 1024**2
+
+        state["details"] = steam.ModDetails(1, "Cool Mod", 200, None, True, 400 * 1024**2)
+        await poller.run_once()
+        assert channel.sent[0]["embed"].fields[0].value == "400.0 MB (+100.0 MB)"
+        await store.close()
+
+    asyncio.run(scenario())
+
+
 def test_old_database_gets_size_column(tmp_path):
     async def scenario():
         import aiosqlite
