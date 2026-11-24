@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import re
 from dataclasses import dataclass
@@ -12,6 +13,9 @@ CHANGELOG_URL = "https://steamcommunity.com/sharedfiles/filedetails/changelog/{i
 WORKSHOP_URL = "https://steamcommunity.com/sharedfiles/filedetails/?id={id}"
 
 BATCH_SIZE = 100
+# Upper bound on Workshop pages read while following dependencies, and how many at once.
+MAX_DEPENDENCY_LOOKUPS = 300
+DEPENDENCY_CONCURRENCY = 4
 TIMEOUT = aiohttp.ClientTimeout(total=30)
 
 _URL_ID_RE = re.compile(r"(?:[?&]id=|CommunityFilePage/)(\d+)")
@@ -35,6 +39,18 @@ class ModDetails:
 class Changelog:
     headline: str
     text: str
+
+
+@dataclass
+class DependencyGraph:
+    requires: dict[int, list[int]]
+    """Required items of every mod whose Workshop page could be read."""
+    unreadable: list[int]
+    """Mods whose page could not be read (or the lookup limit was hit)."""
+
+    def edges(self) -> list[tuple[int, int]]:
+        """(dependency, required_by) pairs."""
+        return [(dep, parent) for parent, deps in self.requires.items() for dep in deps]
 
 
 def workshop_url(mod_id: int) -> str:
@@ -130,3 +146,64 @@ async def fetch_changelog(session: aiohttp.ClientSession, mod_id: int) -> Change
     except (aiohttp.ClientError, TimeoutError) as exc:
         log.warning("Changelog for %s failed: %r", mod_id, exc)
         return None
+
+
+def parse_required_items(html: str) -> list[int]:
+    """Workshop ids listed under "Required items" on a Workshop page, in page order."""
+    container = BeautifulSoup(html, "html.parser").find(id="RequiredItems")
+    if container is None:
+        return []
+    ids: list[int] = []
+    for link in container.find_all("a", href=True):
+        mod_id = parse_workshop_id(link["href"])
+        if mod_id is not None and mod_id not in ids:
+            ids.append(mod_id)
+    return ids
+
+
+async def fetch_required_items(session: aiohttp.ClientSession, mod_id: int) -> list[int] | None:
+    """Required items of a mod, read from its Workshop page. None if the page could not be read."""
+    try:
+        async with session.get(
+            WORKSHOP_URL.format(id=mod_id),
+            timeout=TIMEOUT,
+            headers={"Accept-Language": "en"},
+            cookies={"Steam_Language": "english"},
+        ) as resp:
+            if resp.status != 200:
+                log.warning("Workshop page of %s returned HTTP %s", mod_id, resp.status)
+                return None
+            return [i for i in parse_required_items(await resp.text()) if i != mod_id]
+    except (aiohttp.ClientError, TimeoutError) as exc:
+        log.warning("Workshop page of %s failed: %r", mod_id, exc)
+        return None
+
+
+async def resolve_dependencies(
+    session: aiohttp.ClientSession, roots: list[int], max_lookups: int = MAX_DEPENDENCY_LOOKUPS
+) -> DependencyGraph:
+    """Follow required items from the roots, level by level, reading each Workshop page at most once."""
+    graph = DependencyGraph({}, [])
+    semaphore = asyncio.Semaphore(DEPENDENCY_CONCURRENCY)
+    seen: set[int] = set()
+    level = list(dict.fromkeys(roots))
+
+    async def lookup(mod_id: int) -> list[int] | None:
+        async with semaphore:
+            return await fetch_required_items(session, mod_id)
+
+    while level:
+        budget = max_lookups - len(seen)
+        batch, skipped = level[:budget], level[budget:]
+        graph.unreadable.extend(skipped)
+        seen.update(level)
+        results = await asyncio.gather(*(lookup(mod_id) for mod_id in batch))
+        next_level: list[int] = []
+        for mod_id, deps in zip(batch, results):
+            if deps is None:
+                graph.unreadable.append(mod_id)
+                continue
+            graph.requires[mod_id] = deps
+            next_level.extend(d for d in deps if d not in seen and d not in next_level)
+        level = next_level
+    return graph

@@ -23,6 +23,12 @@ CREATE TABLE IF NOT EXISTS mod_sources (
     preset   TEXT    NOT NULL,
     PRIMARY KEY (guild_id, mod_id, preset)
 );
+CREATE TABLE IF NOT EXISTS mod_dependencies (
+    guild_id    INTEGER NOT NULL,
+    mod_id      INTEGER NOT NULL,
+    required_by INTEGER NOT NULL,
+    PRIMARY KEY (guild_id, mod_id, required_by)
+);
 """
 
 
@@ -100,8 +106,28 @@ class Store:
         ) as cur:
             return [r["preset"] async for r in cur]
 
+    async def add_dependency(self, guild_id: int, mod_id: int, required_by: int) -> None:
+        await self._db.execute(
+            "INSERT OR IGNORE INTO mod_dependencies (guild_id, mod_id, required_by) VALUES (?, ?, ?)",
+            (guild_id, mod_id, required_by),
+        )
+        await self._db.commit()
+
+    async def required_by(self, guild_id: int, mod_id: int) -> list[str]:
+        """Titles of the watched mods that require this one."""
+        async with self._db.execute(
+            "SELECT m.title FROM mod_dependencies d JOIN mods m ON m.guild_id = d.guild_id AND m.mod_id = d.required_by "
+            "WHERE d.guild_id = ? AND d.mod_id = ? ORDER BY m.title COLLATE NOCASE",
+            (guild_id, mod_id),
+        ) as cur:
+            return [r["title"] async for r in cur]
+
     async def remove_mod(self, guild_id: int, mod_id: int) -> bool:
         await self._db.execute("DELETE FROM mod_sources WHERE guild_id = ? AND mod_id = ?", (guild_id, mod_id))
+        await self._db.execute(
+            "DELETE FROM mod_dependencies WHERE guild_id = ? AND (mod_id = ? OR required_by = ?)",
+            (guild_id, mod_id, mod_id),
+        )
         cur = await self._db.execute("DELETE FROM mods WHERE guild_id = ? AND mod_id = ?", (guild_id, mod_id))
         await self._db.commit()
         return cur.rowcount > 0
@@ -118,6 +144,10 @@ class Store:
             (guild_id,),
         ) as cur:
             return [WatchedMod(r["mod_id"], r["title"]) async for r in cur]
+
+    async def guild_mod_ids(self, guild_id: int) -> set[int]:
+        async with self._db.execute("SELECT mod_id FROM mods WHERE guild_id = ?", (guild_id,)) as cur:
+            return {r["mod_id"] async for r in cur}
 
     async def all_mod_ids(self) -> list[int]:
         async with self._db.execute("SELECT DISTINCT mod_id FROM mods") as cur:

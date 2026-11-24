@@ -4,6 +4,7 @@ import aiohttp
 import discord
 from discord import app_commands
 
+from . import REPO_URL
 from .commands import WatchGroup
 from .config import Config
 from .poller import Poller
@@ -24,7 +25,7 @@ class WatchBot(discord.Client):
     async def setup_hook(self) -> None:
         self.store = await Store.open(self.config.db_path)
         self.session = aiohttp.ClientSession(
-            headers={"User-Agent": "arma-workshop-watch (+https://github.com/Andx667/arma-workshop-watch)"}
+            headers={"User-Agent": f"arma-workshop-watch (+{REPO_URL})"}
         )
         self.poller = Poller(
             self, self.store, self.session, self.config.poll_interval_minutes, self.config.heartbeat_path

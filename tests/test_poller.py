@@ -324,3 +324,40 @@ def test_short_steam_hiccup_is_silent(tmp_path, monkeypatch):
         await store.close()
 
     asyncio.run(scenario())
+
+
+def test_update_watches_new_dependencies(tmp_path, monkeypatch):
+    async def scenario():
+        channel = FakeChannel()
+        state = {"updated": 100, "requires": []}
+
+        async def fake_details(session, ids):
+            return {i: steam.ModDetails(i, f"Mod {i}", state["updated"] if i == 1 else 50, None, True) for i in ids}
+
+        async def fake_changelog(session, mod_id):
+            return None
+
+        async def fake_required_items(session, mod_id):
+            return state["requires"] if mod_id == 1 else []
+
+        monkeypatch.setattr(steam, "fetch_details", fake_details)
+        monkeypatch.setattr(steam, "fetch_changelog", fake_changelog)
+        monkeypatch.setattr(steam, "fetch_required_items", fake_required_items)
+        store = await Store.open(tmp_path / "db.sqlite")
+        await store.set_channel(10, 99)
+        await store.add_mod(10, 1, "Mod 1", 100)
+        poller = Poller(FakeClient({99: channel}), store, None, 10, tmp_path / "hb")
+
+        state.update(updated=200, requires=[2])
+        await poller.run_once()
+        assert await store.guild_mod_ids(10) == {1, 2}
+        assert len(channel.sent) == 2
+        assert "now requires 1 more mod" in channel.sent[1]["content"]
+
+        # The dependency is watched from its current state, and its updates say who needs it.
+        await poller.run_once()
+        assert len(channel.sent) == 2
+        assert await store.required_by(10, 2) == ["Mod 1"]
+        await store.close()
+
+    asyncio.run(scenario())

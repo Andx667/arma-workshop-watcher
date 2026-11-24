@@ -30,6 +30,7 @@ def build_update_embed(
     changelog: Changelog | None,
     presets: list[str] | None = None,
     previous_size: int | None = None,
+    required_by: list[str] | None = None,
 ) -> discord.Embed:
     description = ""
     if changelog:
@@ -49,6 +50,8 @@ def build_update_embed(
     if presets:
         value = ", ".join(presets)
         embed.add_field(name="Preset" if len(presets) == 1 else "Presets", value=value[:1024], inline=False)
+    if required_by:
+        embed.add_field(name="Required by", value=", ".join(required_by)[:1024], inline=False)
     if details.preview_url:
         embed.set_thumbnail(url=details.preview_url)
     embed.set_footer(text=f"Workshop ID {details.id}")
@@ -60,6 +63,13 @@ def missing_message(title: str, mod_id: int) -> str:
         f"⚠️ Workshop item **{title}** ({mod_id}) can no longer be found. It was removed or hidden. "
         "I keep watching it; use `/watch remove` to stop."
     )
+
+
+def dependencies_message(title: str, added: list[ModDetails]) -> str:
+    names = ", ".join(f"[{d.title}](<{workshop_url(d.id)}>)" for d in added)
+    if len(names) > 1700:
+        names = names[:1700].rsplit(", ", 1)[0] + ", …"
+    return f"ℹ️ **{title}** now requires {len(added)} more mod(s), I am watching them too: {names}"
 
 
 def steam_down_message(since: int) -> str:

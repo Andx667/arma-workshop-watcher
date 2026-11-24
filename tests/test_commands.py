@@ -3,7 +3,7 @@ import asyncio
 import discord
 
 from bot import steam
-from bot.commands import build_status_embed, channel_health
+from bot.commands import build_status_embed, channel_health, permission_hint
 from bot.poller import Poller
 from bot.store import Store, WatchedMod
 
@@ -87,3 +87,15 @@ def test_missing_mods_lists_only_flagged(tmp_path):
         await store.close()
 
     asyncio.run(scenario())
+
+
+def test_permission_hint_names_missing_permissions_and_role():
+    class Role:
+        name = "arma-workshop-watcher"
+
+    class Guild:
+        self_role = Role()
+
+    text = permission_hint(FakeChannel(5, ALL_PERMS), Guild(), ["Embed Links"])
+    assert "**Embed Links**" in text and "View Channel" not in text
+    assert "**arma-workshop-watcher** role" in text and "<#5>" in text
