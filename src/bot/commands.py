@@ -4,7 +4,8 @@ import aiohttp
 import discord
 from discord import app_commands
 
-from . import steam
+from . import REPO_URL, steam
+from .deps import describe_result, watch_dependencies
 from .poller import Poller
 from .store import Store, WatchedMod
 
@@ -16,6 +17,17 @@ REQUIRED_PERMISSIONS = {"view_channel": "View Channel", "send_messages": "Send M
 def missing_permissions(channel: discord.abc.GuildChannel, member: discord.Member) -> list[str]:
     perms = channel.permissions_for(member)
     return [label for name, label in REQUIRED_PERMISSIONS.items() if not getattr(perms, name)]
+
+
+def permission_hint(channel: discord.abc.GuildChannel, guild: discord.Guild, missing: list[str]) -> str:
+    """Bots cannot ask for channel permissions themselves, so tell the admin exactly what to change."""
+    role = guild.self_role
+    who = f"the **{role.name}** role" if role else guild.me.mention
+    return (
+        f"I am missing **{', '.join(missing)}** in {channel.mention}.\n"
+        f"Open the channel settings → Permissions → add {who} and allow {', '.join(missing)}, "
+        "then run this command again."
+    )
 
 
 def channel_health(guild: discord.Guild, channel_id: int | None) -> tuple[bool, str]:
@@ -63,6 +75,7 @@ def build_status_embed(
         if len(lines) > 1024:
             lines = lines[:1020].rsplit("\n", 1)[0] + "\n…"
         embed.add_field(name=f"Removed or hidden on Steam ({len(missing)})", value=lines, inline=False)
+    embed.set_footer(text=f"Source, issues and docs: {REPO_URL}")
     return embed
 
 
@@ -79,8 +92,8 @@ class WatchGroup(app_commands.Group):
         self.poller = poller
 
     @app_commands.command(description="Start watching a Workshop mod (link or ID)")
-    @app_commands.describe(mod="Workshop link or numeric ID")
-    async def add(self, interaction: discord.Interaction, mod: str):
+    @app_commands.describe(mod="Workshop link or numeric ID", dependencies="Also watch the mod's required items (default: yes)")
+    async def add(self, interaction: discord.Interaction, mod: str, dependencies: bool = True):
         await interaction.response.defer(ephemeral=True)
         mod_id = steam.parse_workshop_id(mod)
         if mod_id is None:
@@ -102,13 +115,18 @@ class WatchGroup(app_commands.Group):
             await interaction.followup.send(f"Already watching **{details.title}**.")
             return
         message = f"Now watching **{details.title}** ({steam.workshop_url(mod_id)})."
+        if dependencies:
+            message += await self._add_dependencies(interaction.guild_id, [mod_id])
         if await self.store.get_channel(interaction.guild_id) is None:
             message += "\nNo notification channel is set yet, use `/watch channel`."
         await interaction.followup.send(message)
 
     @app_commands.command(name="import", description="Watch all Workshop mods of an Arma 3 Launcher preset (.html)")
-    @app_commands.describe(preset="Preset HTML file exported from the Arma 3 Launcher")
-    async def import_(self, interaction: discord.Interaction, preset: discord.Attachment):
+    @app_commands.describe(
+        preset="Preset HTML file exported from the Arma 3 Launcher",
+        dependencies="Also watch required items missing from the preset (default: yes)",
+    )
+    async def import_(self, interaction: discord.Interaction, preset: discord.Attachment, dependencies: bool = True):
         await interaction.response.defer(ephemeral=True)
         if preset.size > MAX_PRESET_BYTES:
             await interaction.followup.send("That file is too large for a preset.")
@@ -138,9 +156,30 @@ class WatchGroup(app_commands.Group):
         message = f"Imported {added} new mods, {existing} were already watched."
         if missing:
             message += f"\nNot found on Steam: {', '.join(map(str, missing[:20]))}" + (" …" if len(missing) > 20 else "")
+        if dependencies:
+            message += await self._add_dependencies(interaction.guild_id, [i for i in ids if details[i].found])
         if await self.store.get_channel(interaction.guild_id) is None:
             message += "\nNo notification channel is set yet, use `/watch channel`."
         await interaction.followup.send(message)
+
+    @app_commands.command(description="Re-check the required items of all watched mods and watch missing ones")
+    async def deps(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        ids = sorted(await self.store.guild_mod_ids(interaction.guild_id))
+        if not ids:
+            await interaction.followup.send("No mods watched yet. Use `/watch add`.")
+            return
+        extra = await self._add_dependencies(interaction.guild_id, ids)
+        await interaction.followup.send(f"Checked {len(ids)} mods." + (extra or "\nAll required items are watched."))
+
+    async def _add_dependencies(self, guild_id: int, roots: list[int]) -> str:
+        """Watch the required items of the roots; returns text to append to the reply."""
+        try:
+            result = await watch_dependencies(self.store, self.session, guild_id, roots)
+        except steam.SteamError:
+            return "\nCould not check dependencies because Steam did not answer, try `/watch deps` later."
+        text = describe_result(result)
+        return f"\n{text}" if text else ""
 
     @app_commands.command(description="Stop watching a Workshop mod")
     @app_commands.describe(mod="Mod to remove")
@@ -178,10 +217,9 @@ class WatchGroup(app_commands.Group):
     @app_commands.command(description="Set the channel for update notifications")
     @app_commands.describe(channel="Channel to post in")
     async def channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
-        if missing_permissions(channel, interaction.guild.me):
-            await interaction.response.send_message(
-                f"I need View Channel, Send Messages and Embed Links in {channel.mention}.", ephemeral=True
-            )
+        missing = missing_permissions(channel, interaction.guild.me)
+        if missing:
+            await interaction.response.send_message(permission_hint(channel, interaction.guild, missing), ephemeral=True)
             return
         await self.store.set_channel(interaction.guild_id, channel.id)
         await interaction.response.send_message(f"Updates will be posted in {channel.mention}.", ephemeral=True)

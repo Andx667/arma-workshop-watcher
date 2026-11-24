@@ -6,7 +6,8 @@ import discord
 from discord.ext import tasks
 
 from . import steam
-from .notifier import build_update_embed, missing_message, steam_back_message, steam_down_message
+from .deps import watch_dependencies
+from .notifier import build_update_embed, dependencies_message, missing_message, steam_back_message, steam_down_message
 from .store import Store
 
 log = logging.getLogger(__name__)
@@ -138,7 +139,8 @@ class Poller:
         changelog = await steam.fetch_changelog(self.session, details.id)
         for sub in due:
             presets = await self.store.sources(sub.guild_id, details.id)
-            embed = build_update_embed(details, changelog, presets, sub.file_size)
+            required_by = await self.store.required_by(sub.guild_id, details.id)
+            embed = build_update_embed(details, changelog, presets, sub.file_size, required_by)
             try:
                 await self._send(sub.channel_id, sub.guild_id, embed=embed)
             except Exception:
@@ -148,6 +150,30 @@ class Poller:
             await self.store.record_update(
                 sub.guild_id, details.id, details.title, details.time_updated, details.file_size or None
             )
+        await self._refresh_dependencies(details, [s.guild_id for s in due])
+
+    async def _refresh_dependencies(self, details: steam.ModDetails, guild_ids: list[int]) -> None:
+        """An update can add required items; watch them in every server that watches the updated mod."""
+        try:
+            direct = await steam.fetch_required_items(self.session, details.id)
+            if not direct:
+                return
+            graph = None
+            for guild_id in guild_ids:
+                watched = await self.store.guild_mod_ids(guild_id)
+                if all(d in watched for d in direct):
+                    for dep in direct:
+                        await self.store.add_dependency(guild_id, dep, details.id)
+                    continue
+                if graph is None:
+                    graph = await steam.resolve_dependencies(self.session, [details.id])
+                result = await watch_dependencies(self.store, self.session, guild_id, [details.id], graph)
+                if result.added:
+                    log.info("Mod %s now requires %d new mod(s) for guild %s", details.id, len(result.added), guild_id)
+                    channel_id = await self.store.get_channel(guild_id)
+                    await self._send(channel_id, guild_id, content=dependencies_message(details.title, result.added))
+        except Exception:
+            log.exception("Could not refresh dependencies of mod %s", details.id)
 
     async def _send(self, channel_id: int | None, guild_id: int, **kwargs) -> None:
         """Permanent problems (no channel set, channel gone, no permission) are logged and swallowed;

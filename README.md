@@ -21,13 +21,16 @@ All commands need the *Manage Server* permission by default (adjustable in Serve
 | Command | What it does |
 | --- | --- |
 | `/watch channel <#channel>` | Where updates are posted (one channel per server) |
-| `/watch import <file>` | Attach an Arma 3 Launcher preset export (`.html`) and watch every Steam Workshop mod in it. Local mods are skipped. Update notifications then name the preset(s) the mod came from |
-| `/watch add <link or id>` | Start watching a mod. The current state is the baseline, so no message is sent for the mod's existing version |
+| `/watch import <file>` | Attach an Arma 3 Launcher preset export (`.html`) and watch every Steam Workshop mod in it. Local mods are skipped. Update notifications then name the preset(s) the mod came from. Required items missing from the preset are added too, unless `dependencies:False` |
+| `/watch add <link or id>` | Start watching a mod. The current state is the baseline, so no message is sent for the mod's existing version. Its required items (dependencies) are watched too, unless `dependencies:False` |
+| `/watch deps` | Re-check the required items of every watched mod and watch any that are missing |
 | `/watch remove <mod>` | Stop watching (autocompletes) |
 | `/watch list` | Show watched mods |
 | `/watch status` | Check that the bot is working: last and next check, whether Steam is answering, whether the notification channel still exists and has the needed permissions, and which mods are removed or hidden on Steam |
 
 If a mod is removed or hidden on Steam, the bot posts one warning and keeps watching.
+
+Dependencies are read from the *Required items* list on each mod's Workshop page and followed recursively. When a watched mod is updated and now requires a mod that isn't watched yet, the bot starts watching it and says so in the channel. Update notifications for a dependency name the mods that require it.
 
 ## How it works
 
@@ -50,7 +53,8 @@ State lives in SQLite at `$DATA_DIR/bot.db`.
 
 1. Create an application at the [Developer Portal](https://discord.com/developers/applications), add a bot, copy its token.
 2. No privileged intents are needed.
-3. Invite with scopes `bot` and `applications.commands`, and the permissions View Channel, Send Messages, Embed Links.
+3. Invite with scopes `bot` and `applications.commands`, and the permissions View Channel, Send Messages, Embed Links. If a channel overrides these, `/watch channel` says which ones are missing and where to allow them.
+4. Optional: put a link to this repository in the application's *Description* (General Information); Discord shows it on the bot's profile.
 
 ## Deploy on CapRover
 
